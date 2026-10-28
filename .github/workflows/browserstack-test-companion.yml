@@ -1,0 +1,114 @@
+name: BrowserStack Test Companion
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  run-tc:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    # tc pushes a Git reference and may open a pull request,
+    # so the default read-only GITHUB_TOKEN is not sufficient.
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      BROWSERSTACK_USERNAME: ${{ secrets.BROWSERSTACK_USERNAME }}
+      BROWSERSTACK_ACCESS_KEY: ${{ secrets.BROWSERSTACK_ACCESS_KEY }}
+      # Pin to a specific release for reproducible CI runs.
+      # Replace <version> and <sha256> with values from the tc release page.
+      TC_PIN_VERSION: "<version>"
+      TC_SHA256: "<sha256>"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Configure Git identity
+        # GitHub-hosted runners have no Git identity by default.
+        # tc needs one to push the duplicate-run marker reference.
+        run: |
+          git config --global user.email "tc-ci@users.noreply.github.com"
+          git config --global user.name "tc-ci"
+
+      - name: Install BrowserStack Test Companion CLI (tc)
+        run: |
+          curl -fsSL -o /tmp/tc-install.sh https://test-companion.browserstack.com/cli/install.sh
+          TC_VERSION="$TC_PIN_VERSION" sh /tmp/tc-install.sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Sign in to BrowserStack
+        timeout-minutes: 2
+        run: tc auth login
+
+      # ── Run on pull_request (PR targeting main) ──────────────────────────
+      # Step 1: Generate test cases for the merged commit and save them to
+      # BrowserStack Test Management.
+      - name: Run tc workflow — generate test cases on PR merge
+        if: github.event_name == 'pull_request' && github.event.pull_request.merged == true
+        env:
+          TC_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          TC_BASE_BRANCH: ${{ github.base_ref }}
+        run: |
+          tc workflow run generate \
+            --event pr_merged \
+            --context "sha=$TC_SHA,branch=$TC_BASE_BRANCH" \
+            --input "save-to-tm=true" \
+            --json --yolo --max-time 15m \
+            --summary-file tc-generate-summary.md
+
+      # Step 2: Automate the test cases that were just saved to Test Management.
+      # The `automate` workflow turns saved TM test cases into automated scripts
+      # and delivers them as a pull request from a branch named tc/automate/<sha>.
+      # Replace <TM_PROJECT_NAME> with your BrowserStack Test Management project name,
+      # or remove --input project=... to use the default project.
+      - name: Run tc workflow — automate test cases on PR merge
+        if: github.event_name == 'pull_request' && github.event.pull_request.merged == true
+        env:
+          TC_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          TC_BASE_BRANCH: ${{ github.base_ref }}
+        run: |
+          tc workflow run automate \
+            --event pr_merged \
+            --context "sha=$TC_SHA,branch=$TC_BASE_BRANCH" \
+            --json --yolo --max-time 20m \
+            --summary-file tc-automate-summary.md
+
+      # ── Run on workflow_dispatch (manual trigger) ─────────────────────────
+      # Runs the project's test suite on BrowserStack and streams JSON logs.
+      - name: Run tc workflow — test suite (manual dispatch)
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          tc workflow run test \
+            --json --yolo --max-time 20m \
+            --summary-file tc-summary.md
+
+      # ── Publish summaries to the GitHub Actions job summary ───────────────
+      - name: Publish summaries
+        if: always()
+        run: |
+          for f in tc-summary.md tc-generate-summary.md tc-automate-summary.md; do
+            [ -f "$f" ] && cat "$f" >> "$GITHUB_STEP_SUMMARY" && echo "" >> "$GITHUB_STEP_SUMMARY" || true
+          done
+
+      # ── Upload all tc summary files as downloadable workflow artifacts ─────
+      - name: Upload tc artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: tc-summaries
+          path: |
+            tc-summary.md
+            tc-generate-summary.md
+            tc-automate-summary.md
+          if-no-files-found: ignore
