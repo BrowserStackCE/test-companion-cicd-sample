@@ -18,10 +18,8 @@ jobs:
     env:
       BROWSERSTACK_USERNAME: ${{ secrets.BROWSERSTACK_USERNAME }}
       BROWSERSTACK_ACCESS_KEY: ${{ secrets.BROWSERSTACK_ACCESS_KEY }}
-      # Pin to a specific release for reproducible CI runs.
-      # Replace <version> and <sha256> with values from the tc release page.
-      TC_PIN_VERSION: "<version>"
-      TC_SHA256: "<sha256>"
+      # Always uses the latest tc release.
+      TC_NO_AUTO_UPGRADE: "1"
 
     steps:
       - name: Checkout repository
@@ -44,7 +42,7 @@ jobs:
       - name: Install BrowserStack Test Companion CLI (tc)
         run: |
           curl -fsSL -o /tmp/tc-install.sh https://test-companion.browserstack.com/cli/install.sh
-          TC_VERSION="$TC_PIN_VERSION" sh /tmp/tc-install.sh
+          sh /tmp/tc-install.sh
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Sign in to BrowserStack
