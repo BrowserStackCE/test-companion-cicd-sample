@@ -1,0 +1,27 @@
+workflows:
+  # Generate test cases when a PR merges into main.
+  # Remove "mode: preview" once you have reviewed a few runs.
+  - name: generate-on-merge
+    workflow: generate
+    on: pr_merged
+    when: { branches: [main] }
+    input: { save-to-tm: "true" }
+    mode: preview
+    limits: { time: 15m, cost_usd: 5 }
+    enabled: true
+
+  # Automate the generated test cases into Playwright scripts.
+  - name: automate-on-merge
+    workflow: automate
+    on: pr_merged
+    when: { branches: [main] }
+    mode: preview
+    limits: { time: 20m, cost_usd: 8 }
+    enabled: true
+
+  # Analyze root cause when a build fails.
+  - name: rca-on-fail
+    workflow: rca
+    on: build_failed
+    limits: { time: 10m, cost_usd: 3 }
+    enabled: true
